@@ -592,7 +592,7 @@ class NvmlBackend:
     @staticmethod
     def get_system_details() -> Dict[str, str]:
         info: Dict[str, str] = {}
-        info["OS / Distro"] = "CachyOS Linux"
+        info["OS / Distro"] = "Linux"
         os_rel = Path("/etc/os-release")
         if os_rel.exists():
             for line in os_rel.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -603,7 +603,7 @@ class NvmlBackend:
         info["Kernel"] = platform.release()
         info["Architecture"] = platform.machine()
         info["Session Type"] = os.environ.get("XDG_SESSION_TYPE", "wayland").upper()
-        info["Desktop Environment"] = os.environ.get("XDG_CURRENT_DESKTOP", "KDE Plasma")
+        info["Desktop Environment"] = os.environ.get("XDG_CURRENT_DESKTOP", "GNOME / KDE / Wayland")
 
         # CPU Model
         cpu_model = "Unknown CPU"

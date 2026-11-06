@@ -27,8 +27,21 @@ fi
 echo "[*] Checking Python dependencies..."
 python3 -c "import gi; gi.require_version('Gtk', '4.0'); gi.require_version('Adw', '1'); from gi.repository import Gtk, Adw" 2>/dev/null || {
     echo "[!] Warning: GTK4 and Libadwaita Python bindings not found."
-    echo "    On Arch / CachyOS Linux, install them with:"
-    echo "    sudo pacman -S gtk4 libadwaita python-gobject python-cairo"
+    if command -v pacman >/dev/null 2>&1; then
+        echo "    Install with (Arch / CachyOS):"
+        echo "    sudo pacman -S gtk4 libadwaita python-gobject python-cairo polkit"
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo "    Install with (Ubuntu / Debian / Pop!_OS / Linux Mint):"
+        echo "    sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 libadwaita-1-0 policykit-1"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "    Install with (Fedora / Nobara / RHEL):"
+        echo "    sudo dnf install python3-gobject gtk4 libadwaita polkit"
+    elif command -v zypper >/dev/null 2>&1; then
+        echo "    Install with (openSUSE):"
+        echo "    sudo zypper install python3-gobject typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 libadwaita-1-0 polkit"
+    else
+        echo "    Please install GTK4, Libadwaita, and python-gobject via your distro package manager."
+    fi
 }
 
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR" "$TARGET_INSTALL_DIR"

@@ -490,7 +490,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         hdr_title.add_css_class("nv-header-title")
         hdr_sep = Gtk.Label(label="•")
         hdr_sep.add_css_class("nv-card-sub")
-        hdr_sub = Gtk.Label(label="CachyOS Liquid Glass Edition")
+        hdr_sub = Gtk.Label(label="Liquid Glass Linux Edition")
         hdr_sub.add_css_class("nv-header-sub")
         title_box.append(hdr_title)
         title_box.append(hdr_sep)

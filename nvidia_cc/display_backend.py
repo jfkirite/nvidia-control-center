@@ -322,6 +322,11 @@ class DisplayBackend:
             if proc.returncode == 0:
                 return True, f"Applied display settings to {connector} via KWin/KScreen."
             return False, (proc.stderr or proc.stdout or "kscreen-doctor returned an error").strip()
+        except FileNotFoundError:
+            return (
+                False,
+                "KScreen is not available on this desktop. On GNOME and other desktop environments, resolution, refresh rate, and scaling can be managed directly in Display Settings.",
+            )
         except Exception as exc:
             return False, str(exc)
 
@@ -384,6 +389,11 @@ class DisplayBackend:
             return (
                 False,
                 "Could not apply Digital Vibrance via KScreen or nvidia-settings.",
+            )
+        except FileNotFoundError:
+            return (
+                False,
+                "Digital Vibrance requires KDE Wayland color pipeline or an X11 session. On GNOME Wayland, color profiles can be assigned in GNOME Settings -> Color.",
             )
         except Exception as exc:
             return False, str(exc)

@@ -1,6 +1,6 @@
-# NVIDIA Control Center for Linux (CachyOS)
+# NVIDIA Control Center for Linux
 
-A native **GTK4 + Libadwaita + NVML (`libnvidia-ml.so.1`)** graphics control panel modeled after the modern Windows **NVIDIA App**, tailored for **Linux (CachyOS, Arch, Fedora, etc. with KDE Plasma / Wayland + NVIDIA RTX)**.
+A native **GTK4 + Libadwaita + NVML (`libnvidia-ml.so.1`)** graphics control panel modeled after the modern Windows **NVIDIA App**, built for **Linux (GNOME, KDE Plasma, X11, Wayland + NVIDIA RTX / GTX)**.
 
 ![NVIDIA Control Center Icon](data/nvidia-control-center.svg)
 
@@ -47,17 +47,50 @@ A native **GTK4 + Libadwaita + NVML (`libnvidia-ml.so.1`)** graphics control pan
    - Integrates with KDE Plasma Wayland (`kscreen-doctor`), DRM EDID detection, and `nvidia-settings` (Digital Vibrance, RGB Range, HDR10, VRR policy, Refresh Rate, and Scale).
 
 6. **System & Driver Inspector**
-   - Complete hardware, VBIOS, UUID, CUDA, Vulkan, `nvidia-drm` kernel module parameters, and CachyOS kernel overview with one-click clipboard export.
+   - Complete hardware, VBIOS, UUID, CUDA, Vulkan, `nvidia-drm` kernel module parameters, and system kernel overview with one-click clipboard export.
+
+---
+
+## Desktop Environment & Distro Support
+
+- **GNOME (Wayland / X11)**:
+  - Native **Libadwaita** design that matches GNOME's aesthetic, dark/light themes, and window decorations out of the box.
+  - Full GPU overclocking, power limit, fan curves, OptiScaler/DLSS frame generation, and Steam Proton game profiles work 100%.
+  - Display resolution, scaling, and refresh rates are managed natively via GNOME Settings (`gnome-control-center display`).
+- **KDE Plasma (Wayland / X11)**:
+  - Full support including native Wayland color management (`kscreen-doctor`) for refresh rates, VRR, HDR, and ICC-based Digital Vibrance.
+- **Other Desktop Environments (XFCE, Cinnamon, Hyprland, Sway)**:
+  - Fully compatible with all GPU tuning, fan curves, and game profiles.
 
 ---
 
 ## Requirements
 
-### System Packages (Arch Linux / CachyOS)
+Ensure you have the official **NVIDIA proprietary driver** (535, 550, 560, or newer) installed.
+
+### Install Required Dependencies
+
+#### **Ubuntu / Debian / Linux Mint / Pop!_OS**
 ```bash
-sudo pacman -S gtk4 libadwaita python-gobject python-cairo nvidia-utils polkit
+sudo apt update
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 libadwaita-1-0 policykit-1
 ```
-*(Optional: `kscreen` for Wayland display controls, `nvidia-settings` for X11/color vibrance controls)*
+
+#### **Fedora / Nobara Linux**
+```bash
+sudo dnf install python3-gobject gtk4 libadwaita polkit
+```
+
+#### **Arch Linux / CachyOS**
+```bash
+sudo pacman -S gtk4 libadwaita python-gobject python-cairo polkit
+```
+*(Optional on KDE: `kscreen` for Wayland display controls)*
+
+#### **openSUSE (Tumbleweed / Leap)**
+```bash
+sudo zypper install python3-gobject typelib-1_0-Gtk-4_0 typelib-1_0-Adw-1 libadwaita-1-0 polkit
+```
 
 ---
 
