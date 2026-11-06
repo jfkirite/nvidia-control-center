@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=NVIDIA Control Center
+GenericName=NVIDIA Graphics & Performance Control Panel
+Comment=Modern Windows NVIDIA App style GPU telemetry, overclocking, DLSS/game profiles, and display control for Linux
+Exec=nvidia-control-center
+Icon=nvidia-control-center
+Terminal=false
+Categories=System;Settings;HardwareSettings;GTK;
+Keywords=nvidia;gpu;graphics;overclock;dlss;g-sync;fan;telemetry;cachyos;
+StartupNotify=true
+StartupWMClass=org.cachyos.NvidiaControlCenter
