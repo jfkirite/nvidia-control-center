@@ -65,7 +65,7 @@ sudo pacman -S gtk4 libadwaita python-gobject python-cairo nvidia-utils polkit
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/<YOUR_USERNAME>/nvidia-control-center.git
+   git clone https://github.com/jfkirite/nvidia-control-center.git
    cd nvidia-control-center
    ```
 
