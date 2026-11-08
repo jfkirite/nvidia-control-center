@@ -44,6 +44,9 @@ MANAGED_ENV_KEYS: Tuple[str, ...] = (
     "PROTON_ENABLE_NGX_UPDATER",
     "PROTON_DLSS_UPGRADE",
     "PROTON_FSR4_UPGRADE",
+    "PROTON_ENABLE_NVAPI",
+    "WINEHAGS",
+    "DXVK_NVAPI_ALLOW_OTHER_DRIVERS",
     "DXVK_NVAPI_DRS_SETTINGS",
     "DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE",
     "DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION",
@@ -411,17 +414,18 @@ class ProfileManager:
             drs_parts.append("ngx_dlss_rr_override=on")
             drs_parts.append(f"ngx_dlss_rr_override_render_preset_selection={preset_val}")
 
+        # OptiScaler Universal Frame Generation & Upscaler Injection
+        fg_active = bool(profile.optiscaler_fg_enabled and profile.optiscaler_fg_mode != "off")
+        interp_count = "2" if profile.optiscaler_fg_mode == "mfg_3x" else ("3" if profile.optiscaler_fg_mode == "mfg_4x" else "1")
+
         if drs_parts:
             env["DXVK_NVAPI_DRS_SETTINGS"] = ",".join(drs_parts)
 
-        # OptiScaler Universal Frame Generation & Upscaler Injection
-        fg_active = bool(profile.optiscaler_fg_enabled and profile.optiscaler_fg_mode != "off")
         use_optiscaler = profile.optiscaler_enable or fg_active
         if use_optiscaler:
             env["PROTON_USE_OPTISCALER"] = "1"
             env["WINEDLLOVERRIDES"] = "dxgi=n,b"
 
-            interp_count = "2" if profile.optiscaler_fg_mode == "mfg_3x" else ("3" if profile.optiscaler_fg_mode == "mfg_4x" else "1")
             fg_enabled_str = "true" if fg_active else "false"
             fg_input_str = "dlssg" if fg_active else "nofg"
             fg_output_str = "fsrfg" if fg_active else "nofg"
@@ -433,14 +437,14 @@ class ProfileManager:
                 "FSRFG.AllowAsync=true",
                 f"XeFG.InterpolationCount={interp_count}",
                 "Spoofing.StreamlineSpoofing=true",
-                "Spoofing.Dxgi=true",
+                "Spoofing.Dxgi=false",
                 "Spoofing.SpoofHAGS=true",
                 "Spoofing.SpoofedGPUName=NVIDIA GeForce RTX 4090",
                 "Spoofing.SpoofedDeviceId=0x2684",
                 "Spoofing.SpoofedVendorId=0x10de",
-                "Upscalers.Dx11Upscaler=dlss",
-                "Upscalers.Dx12Upscaler=dlss",
-                "Upscalers.VulkanUpscaler=dlss",
+                "NvApi.OverrideNvapiDll=false",
+                "NvApi.DisableFlipMetering=false",
+                "NvApi.DontUseFakenvapiForXeLLOnNvidia=true",
                 "DLSS.Enabled=true",
             ]
             env["PROTON_OPTISCALER_CONFIG"] = ";".join(cfg_parts)
@@ -661,6 +665,21 @@ class ProfileManager:
                         f'"DLSSG_IndicatorText"={fg_dword}',
                         new_txt,
                     )
+                    # Streamline signature check bypass (required for DLSS-G / OptiScaler proxy DLLs on RTX 30/20 series)
+                    if fg_active:
+                        if "DisableSignatureChecks" in new_txt:
+                            new_txt = re.sub(
+                                r'"DisableSignatureChecks"=dword:[0-9a-fA-F]{8}',
+                                '"DisableSignatureChecks"=dword:00000001',
+                                new_txt,
+                            )
+                        elif r"[Software\NVIDIA Corporation\Global]" in new_txt:
+                            new_txt = new_txt.replace(
+                                r"[Software\NVIDIA Corporation\Global]",
+                                "[Software\\NVIDIA Corporation\\Global]\n\"DisableSignatureChecks\"=dword:00000001",
+                            )
+                        else:
+                            new_txt += '\n[Software\\\\NVIDIA Corporation\\\\Global]\n"DisableSignatureChecks"=dword:00000001\n'
                     if new_txt != reg_txt:
                         sys_reg.write_text(new_txt, encoding="utf-8")
                 except Exception:
@@ -753,10 +772,14 @@ class ProfileManager:
     def _find_optiscaler_source_dir(self) -> Optional[Path]:
         """Finds the local repository of OptiScaler and Frame Gen DLLs."""
         for candidate in (
+            self.config_dir / "optiscaler",
+            Path.home() / ".local" / "share" / "optiscaler",
             Path.home() / ".local" / "share" / "goverlay" / "optiscaler-stable",
             Path.home() / ".local" / "share" / "goverlay" / "dlssenabler-stable",
             Path.home() / ".local" / "share" / "goverlay" / "gameconfig" / "global",
             Path.home() / ".local" / "share" / "Steam" / "steamapps" / "compatdata" / "0" / "pfx" / "drive_c" / "windows" / "system32" / "umu",
+            Path("/usr/share/optiscaler"),
+            Path("/usr/lib/optiscaler"),
         ):
             if candidate.exists() and (candidate / "OptiScaler.dll").is_file():
                 return candidate
@@ -804,13 +827,15 @@ class ProfileManager:
             dxgi_dst = b_dir / "dxgi.dll"
             src_opti_dll = opti_src / "OptiScaler.dll"
             if src_opti_dll.exists():
-                if not dxgi_dst.exists():
+                if not dxgi_dst.exists() or dxgi_dst.stat().st_size != src_opti_dll.stat().st_size:
                     try:
+                        if dxgi_dst.exists() and not (b_dir / "dxgi.dll.bak_nvcc").exists():
+                            shutil.copy2(dxgi_dst, b_dir / "dxgi.dll.bak_nvcc")
                         shutil.copy2(src_opti_dll, dxgi_dst)
                     except Exception:
                         pass
                 opti_dst = b_dir / "OptiScaler.dll"
-                if not opti_dst.exists():
+                if not opti_dst.exists() or opti_dst.stat().st_size != src_opti_dll.stat().st_size:
                     try:
                         shutil.copy2(src_opti_dll, opti_dst)
                     except Exception:
@@ -842,7 +867,7 @@ class ProfileManager:
             for fname in fg_files:
                 fsrc = opti_src / fname
                 fdst = b_dir / fname
-                if fsrc.exists() and not fdst.exists():
+                if fsrc.exists() and (not fdst.exists() or fdst.stat().st_size != fsrc.stat().st_size):
                     try:
                         shutil.copy2(fsrc, fdst)
                     except Exception:
@@ -878,10 +903,10 @@ class ProfileManager:
             text = ini_path.read_text(encoding="utf-8", errors="replace")
             orig = text
 
-            # Always route upscaling to NVIDIA DLSS on an RTX GPU instead of fsr31
-            text = self._update_ini_section_key(text, "Upscalers", "Dx11Upscaler", "dlss")
-            text = self._update_ini_section_key(text, "Upscalers", "Dx12Upscaler", "dlss")
-            text = self._update_ini_section_key(text, "Upscalers", "VulkanUpscaler", "dlss")
+            # OptiScaler upscalers: keep auto so games with native DLSS work cleanly without forcing wrapper hops
+            text = self._update_ini_section_key(text, "Upscalers", "Dx11Upscaler", "auto")
+            text = self._update_ini_section_key(text, "Upscalers", "Dx12Upscaler", "auto")
+            text = self._update_ini_section_key(text, "Upscalers", "VulkanUpscaler", "auto")
             text = self._update_ini_section_key(text, "DLSS", "Enabled", "true")
 
             # Frame Generation (OptiScaler Universal Frame Gen: FSR 3.1 & XeFG)
@@ -894,29 +919,33 @@ class ProfileManager:
                 interp_count = "2" if profile.optiscaler_fg_mode == "mfg_3x" else ("3" if profile.optiscaler_fg_mode == "mfg_4x" else "1")
                 text = self._update_ini_section_key(text, "XeFG", "InterpolationCount", interp_count)
                 text = self._update_ini_section_key(text, "Spoofing", "StreamlineSpoofing", "true")
-                text = self._update_ini_section_key(text, "Spoofing", "Dxgi", "true")
+                text = self._update_ini_section_key(text, "Spoofing", "Dxgi", "false")
                 text = self._update_ini_section_key(text, "Spoofing", "SpoofHAGS", "true")
                 text = self._update_ini_section_key(text, "Spoofing", "SpoofedGPUName", "NVIDIA GeForce RTX 4090")
                 text = self._update_ini_section_key(text, "Spoofing", "SpoofedDeviceId", "0x2684")
                 text = self._update_ini_section_key(text, "Spoofing", "SpoofedVendorId", "0x10de")
+                text = self._update_ini_section_key(text, "NvApi", "OverrideNvapiDll", "false")
+                text = self._update_ini_section_key(text, "NvApi", "DisableFlipMetering", "false")
+                text = self._update_ini_section_key(text, "NvApi", "DontUseFakenvapiForXeLLOnNvidia", "true")
             else:
                 text = self._update_ini_section_key(text, "FrameGen", "Enabled", "false")
                 text = self._update_ini_section_key(text, "FrameGen", "FGInput", "nofg")
                 text = self._update_ini_section_key(text, "FrameGen", "FGOutput", "nofg")
+                text = self._update_ini_section_key(text, "NvApi", "OverrideNvapiDll", "auto")
+                text = self._update_ini_section_key(text, "NvApi", "DisableFlipMetering", "auto")
 
-            preset_int = OPTISCALER_PRESET_INT_MAP.get(profile.dlss_preset, "11")
-            if profile.dlss_override:
-                p_val = "11" if preset_int == "auto" else preset_int
+            preset_int = OPTISCALER_PRESET_INT_MAP.get(profile.dlss_preset, "auto")
+            # Only enable custom preset override if a valid specific preset is chosen (not auto/11 which can crash NGX with BAD0000B)
+            if profile.dlss_override and preset_int not in ("auto", "11"):
                 text = self._update_ini_section_key(text, "DLSS", "RenderPresetOverride", "true")
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetForAll", p_val)
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetDLAA", p_val)
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetUltraQuality", p_val)
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetQuality", p_val)
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetBalanced", p_val)
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetPerformance", p_val)
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetUltraPerformance", p_val)
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetForAll", preset_int)
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetDLAA", preset_int)
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetUltraQuality", preset_int)
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetQuality", preset_int)
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetBalanced", preset_int)
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetPerformance", preset_int)
             else:
-                text = self._update_ini_section_key(text, "DLSS", "RenderPresetOverride", "auto")
+                text = self._update_ini_section_key(text, "DLSS", "RenderPresetOverride", "false")
                 text = self._update_ini_section_key(text, "DLSS", "RenderPresetForAll", "auto")
 
             # Upscale Ratio override

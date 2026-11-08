@@ -228,14 +228,14 @@ def _apply_kernel_framegen_env(enabled: bool, applied: list[str], errors: list[s
                 "FSRFG.AllowAsync=true;"
                 "XeFG.InterpolationCount=1;"
                 "Spoofing.StreamlineSpoofing=true;"
-                "Spoofing.Dxgi=true;"
+                "Spoofing.Dxgi=false;"
                 "Spoofing.SpoofHAGS=true;"
                 "Spoofing.SpoofedGPUName=NVIDIA GeForce RTX 4090;"
                 "Spoofing.SpoofedDeviceId=0x2684;"
                 "Spoofing.SpoofedVendorId=0x10de;"
-                "Upscalers.Dx11Upscaler=dlss;"
-                "Upscalers.Dx12Upscaler=dlss;"
-                "Upscalers.VulkanUpscaler=dlss;"
+                "NvApi.OverrideNvapiDll=false;"
+                "NvApi.DisableFlipMetering=false;"
+                "NvApi.DontUseFakenvapiForXeLLOnNvidia=true;"
                 "DLSS.Enabled=true"
             )
             conf_content = (
@@ -243,6 +243,8 @@ def _apply_kernel_framegen_env(enabled: bool, applied: list[str], errors: list[s
                 "PROTON_USE_OPTISCALER=1\n"
                 "WINEDLLOVERRIDES=dxgi=n,b\n"
                 f"PROTON_OPTISCALER_CONFIG={fg_cfg}\n"
+                "PROTON_ENABLE_NVAPI=1\n"
+                "WINEHAGS=1\n"
                 "PROTON_ENABLE_NGX_UPDATER=1\n"
                 "PROTON_DLSS_UPGRADE=1\n"
                 "PROTON_FSR4_UPGRADE=0\n"
@@ -257,6 +259,8 @@ def _apply_kernel_framegen_env(enabled: bool, applied: list[str], errors: list[s
                 "export PROTON_USE_OPTISCALER=1\n"
                 'export WINEDLLOVERRIDES="dxgi=n,b"\n'
                 f'export PROTON_OPTISCALER_CONFIG="{fg_cfg}"\n'
+                "export PROTON_ENABLE_NVAPI=1\n"
+                "export WINEHAGS=1\n"
                 "export PROTON_ENABLE_NGX_UPDATER=1\n"
                 "export PROTON_DLSS_UPGRADE=1\n"
                 "export PROTON_FSR4_UPGRADE=0\n"
