@@ -15,6 +15,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from .display_backend import DisplayBackend, DisplayOutput  # noqa: E402
+from .console_mode import ConsoleModeManager  # noqa: E402
 from .nvml_backend import GpuSnapshot, NvmlBackend  # noqa: E402
 from .profiles import (  # noqa: E402
     DLSS_FG_MODE_MAP,
@@ -184,9 +185,9 @@ headerbar.nv-header {
     border-left: 1px solid rgba(255, 255, 255, 0.12);
     border-right: 1px solid rgba(255, 255, 255, 0.07);
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 14px;
-    padding: 14px 16px;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    padding: 9px 13px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.14);
     transition: all 160ms ease;
 }
 
@@ -314,8 +315,9 @@ dropdown > button {
     border-left: 1px solid rgba(255, 255, 255, 0.12);
     border-right: 1px solid rgba(255, 255, 255, 0.08);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 9px;
-    padding: 5px 10px;
+    border-radius: 8px;
+    padding: 3px 8px;
+    font-size: 12px;
 }
 
 entry {
@@ -344,8 +346,8 @@ entry {
 }
 
 .nv-setting-row {
-    padding: 6px 8px;
-    border-radius: 9px;
+    padding: 3px 6px;
+    border-radius: 6px;
     transition: background-color 150ms ease;
 }
 
@@ -354,7 +356,7 @@ entry {
 }
 
 .nv-setting-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: #e2e8f0;
 }
@@ -371,7 +373,7 @@ entry {
 }
 
 .nv-card-value-small {
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 700;
     color: #9bf00a;
 }
@@ -384,10 +386,32 @@ entry {
     border-left: 1px solid rgba(156, 236, 22, 0.32);
     border-right: 1px solid rgba(118, 185, 0, 0.18);
     border-bottom: 1px solid rgba(118, 185, 0, 0.15);
-    border-radius: 14px;
-    padding: 14px 16px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.20);
+    border-radius: 9px;
+    padding: 7px 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.20);
     transition: all 160ms ease;
+}
+
+.nv-status-pill {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+    border-left: 1px solid rgba(255, 255, 255, 0.10);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 18px;
+    padding: 5px 12px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #c8d3e2;
+}
+
+.nv-status-pill-active {
+    background-image: linear-gradient(180deg, rgba(136, 214, 0, 0.22) 0%, rgba(118, 185, 0, 0.10) 100%);
+    border-top: 1px solid rgba(164, 244, 32, 0.50);
+    border-left: 1px solid rgba(140, 220, 12, 0.36);
+    border-right: 1px solid rgba(118, 185, 0, 0.28);
+    border-bottom: 1px solid rgba(118, 185, 0, 0.22);
+    color: #9bf00a;
 }
 """
 
@@ -438,11 +462,13 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         self.nvml = NvmlBackend(history_len=60)
         self.profiles_mgr = ProfileManager()
         self.display_mgr = DisplayBackend()
+        self.console_mgr = ConsoleModeManager()
         self.tuning_cfg = self.nvml.load_tuning_config()
         self.last_snap: GpuSnapshot = self.nvml.poll()
         self.selected_profile: GameProfile = self.profiles_mgr.list_profiles()[0]
 
         self._updating_profile_ui = False
+        self._updating_console_ui = False
         self._last_curve_fan_speed: Optional[int] = None
         self._fan_apply_in_flight: bool = False
         self._last_proc_signature: Optional[list] = None
@@ -585,7 +611,18 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         self.stack.add_named(self._build_system_page(), "system")
 
         self._set_active_nav("dashboard")
-        self.set_content(root_box)
+        self.toast_overlay = Adw.ToastOverlay()
+        self.toast_overlay.set_child(root_box)
+        self.set_content(self.toast_overlay)
+
+    def show_toast(self, message: str, timeout: int = 4):
+        """Displays an Adw.Toast notification on the window."""
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(timeout)
+            self.toast_overlay.add_toast(toast)
+        except Exception:
+            pass
 
     def _setup_responsive_breakpoints(self):
         """Configures Libadwaita responsive breakpoint so narrow/tiled windows reflow smoothly."""
@@ -947,23 +984,6 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             self.last_snap.kernel_ntsync or bool(self.tuning_cfg.get("kernel_ntsync", True))
         )
 
-        self.sw_kernel_framegen = self._add_toggle_row(
-            kern_card,
-            "Kernel OptiScaler Frame Gen",
-            tooltip=(
-                "<b>Kernel-Level OptiScaler Frame Generation Infrastructure</b>\n"
-                "Synchronizes the Linux kernel module, PCIe bus, and Proton runtime parameters for zero-stutter AI frame interpolation:\n"
-                "• Enforces PCIe Maximum Performance Mode\n"
-                "• Enables NVreg_EnableStreamMemOPs & PCIE Relaxed Ordering\n"
-                "• Activates in-kernel NTSYNC (/dev/ntsync) low-latency pacing\n"
-                "• Sets kernel.split_lock_mitigate=0 for jitter-free presentation\n"
-                "• Persists system-wide OptiScaler Frame Generation environment"
-            ),
-        )
-        self.sw_kernel_framegen.set_active(
-            bool(self.tuning_cfg.get("kernel_framegen", True))
-        )
-
         box.append(kern_card)
 
         # Fan Control & Interactive Curve Card (Only shows controls relevant to active mode)
@@ -1184,7 +1204,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         self.tuning_cfg["kernel_stream_memops"] = self.sw_kernel_stream_memops.get_active()
         self.tuning_cfg["kernel_vrr_memclk"] = self.sw_kernel_vrr_memclk.get_active()
         self.tuning_cfg["kernel_ntsync"] = self.sw_kernel_ntsync.get_active()
-        self.tuning_cfg["kernel_framegen"] = self.sw_kernel_framegen.get_active()
+        self.tuning_cfg["kernel_framegen"] = self.tuning_cfg.get("kernel_framegen", True)
         self.tuning_cfg["last_applied"] = {
             "power_limit": pwr,
             "core_offset": core_off,
@@ -1214,7 +1234,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             kernel_stream_memops="on" if self.sw_kernel_stream_memops.get_active() else "off",
             kernel_vrr_memclk="on" if self.sw_kernel_vrr_memclk.get_active() else "off",
             kernel_ntsync="on" if self.sw_kernel_ntsync.get_active() else "off",
-            kernel_framegen="on" if self.sw_kernel_framegen.get_active() else "off",
+            kernel_framegen="on" if self.tuning_cfg.get("kernel_framegen", True) else "off",
         )
 
     def _on_apply_tuning_clicked(self, _btn):
@@ -1251,7 +1271,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             kernel_stream_memops="on" if self.sw_kernel_stream_memops.get_active() else "off",
             kernel_vrr_memclk="on" if self.sw_kernel_vrr_memclk.get_active() else "off",
             kernel_ntsync="on" if self.sw_kernel_ntsync.get_active() else "off",
-            kernel_framegen="on" if self.sw_kernel_framegen.get_active() else "off",
+            kernel_framegen="on" if self.tuning_cfg.get("kernel_framegen", True) else "off",
             cpu_governor="performance" if is_smooth else None,
         )
 
@@ -1356,48 +1376,40 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         hdr_card.append(self.badge_prof_mode)
         rbox.append(hdr_card)
 
-        # Ultra-Smooth Frametime Mode Card (All-In-One)
-        self.smooth_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        # Ultra-Smooth Frametime Mode Bar (All-In-One Compact)
+        self.smooth_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.smooth_card.add_css_class("nv-smooth-card")
-
-        smooth_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        smooth_top.set_valign(Gtk.Align.CENTER)
+        self.smooth_card.set_valign(Gtk.Align.CENTER)
 
         smooth_icon = Gtk.Image.new_from_icon_name("media-playlist-consecutive-symbolic")
-        smooth_icon.set_pixel_size(20)
+        smooth_icon.set_pixel_size(16)
         smooth_icon.add_css_class("nv-status-ok")
-        smooth_top.append(smooth_icon)
+        self.smooth_card.append(smooth_icon)
 
-        smooth_title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        smooth_title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         smooth_title_box.set_hexpand(True)
-        lbl_sm_title = Gtk.Label(label="Ultra-Smooth Frametime Mode (All-in-One)", xalign=0)
-        lbl_sm_title.add_css_class("nv-section-title")
-        self.lbl_sm_desc = Gtk.Label(
-            label="One-click optimization: locks display-cadence FPS, low latency queue, NTSYNC kernel sync, PCIe full power & zero split-lock latency.",
-            xalign=0,
-            wrap=True,
-        )
-        self.lbl_sm_desc.add_css_class("nv-card-sub")
+        lbl_sm_title = Gtk.Label(label="Ultra-Smooth Frametime Mode", xalign=0)
+        lbl_sm_title.add_css_class("nv-setting-title")
         smooth_title_box.append(lbl_sm_title)
-        smooth_title_box.append(self.lbl_sm_desc)
-        smooth_top.append(smooth_title_box)
+
+        info_sm = Gtk.Image.new_from_icon_name("dialog-information-symbolic")
+        info_sm.set_pixel_size(14)
+        info_sm.add_css_class("nv-info-icon")
+        smooth_title_box.append(info_sm)
+        self.smooth_card.append(smooth_title_box)
 
         self.badge_smooth_status = Gtk.Label(label="Disabled")
         self.badge_smooth_status.add_css_class("nv-badge-muted")
         self.badge_smooth_status.set_valign(Gtk.Align.CENTER)
-        smooth_top.append(self.badge_smooth_status)
+        self.smooth_card.append(self.badge_smooth_status)
 
         self.sw_smooth_frametimes = Gtk.Switch()
         self.sw_smooth_frametimes.set_valign(Gtk.Align.CENTER)
         self.sw_smooth_frametimes.connect("notify::active", self._on_smooth_frametimes_toggled)
-        smooth_top.append(self.sw_smooth_frametimes)
-
-        self.smooth_card.append(smooth_top)
+        self.smooth_card.append(self.sw_smooth_frametimes)
 
         self.lbl_smooth_detail = Gtk.Label(label="", xalign=0, wrap=True)
-        self.lbl_smooth_detail.add_css_class("nv-status-ok")
         self.lbl_smooth_detail.set_visible(False)
-        self.smooth_card.append(self.lbl_smooth_detail)
 
         tooltip_smooth = (
             "<b>Ultra-Smooth Frametime Mode (All-In-One)</b>\n"
@@ -1415,50 +1427,30 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         rbox.append(self.smooth_card)
 
         # DLSS Super Resolution (Upscaling), Ray Reconstruction & Frame Gen
-        dlss_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        dlss_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         dlss_card.add_css_class("nv-card")
         dlss_hdr = Gtk.Label(
-            label="NVIDIA DLSS SUPER RESOLUTION, RAY RECONSTRUCTION & FRAME GENERATION",
+            label="NVIDIA DLSS SUPER RESOLUTION & FRAME GENERATION",
             xalign=0,
         )
         dlss_hdr.add_css_class("nv-card-title")
         dlss_hdr.set_ellipsize(Pango.EllipsizeMode.END)
         dlss_card.append(dlss_hdr)
 
-        self.sw_dlss_override = self._add_toggle_row(
-            dlss_card,
-            "DLSS Super Resolution",
-            tooltip=(
-                "<b>DLSS Super Resolution (AI Upscaling)</b>\n"
-                "Renders the game at a lower internal resolution and uses NVIDIA AI Tensor Cores to upscale to native resolution, dramatically boosting framerates with high visual fidelity.\n\n"
-                "<small>Internal: ngx_dlss_sr_override=on</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-
-        self.sw_dlss_upgrade = self._add_toggle_row(
-            dlss_card,
-            "Auto-Upgrade DLSS DLLs",
-            tooltip=(
-                "<b>Automatic DLSS DLL Upgrades</b>\n"
-                "Automatically replaces outdated in-game nvngx_dlss.dll files with the newest optimized version, improving stability and reducing ghosting.\n\n"
-                "<small>Internal: PROTON_DLSS_UPGRADE=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-
         self.dd_dlss_sr_mode = self._add_dropdown_row(
             dlss_card,
-            "DLSS Quality Preset",
+            "DLSS Super Resolution",
             [v[0] for v in DLSS_SR_MODE_MAP.values()],
             tooltip=(
-                "<b>DLSS Upscaling Quality Mode</b>\n"
-                "Selects your target balance between image sharpness and framerate:\n"
+                "<b>DLSS Super Resolution (AI Upscaling)</b>\n"
+                "Renders at a lower internal resolution and uses Tensor Cores to upscale cleanly to display resolution:\n"
+                "• <b>Default (App Controlled)</b>: Uses in-game settings without override\n"
                 "• <b>DLAA (100%)</b>: Native AI Anti-Aliasing (Ultra Quality)\n"
                 "• <b>Quality (67%)</b>: Balanced sharpness and performance (1.5x)\n"
                 "• <b>Balanced (58%)</b>: Ideal for fast action (1.7x)\n"
                 "• <b>Performance (50%)</b>: 2.0x performance scaling\n"
-                "• <b>Ultra Performance (33%)</b>: 3.0x maximum performance scaling"
+                "• <b>Ultra Performance (33%)</b>: 3.0x maximum performance scaling\n"
+                "• <b>Custom Resolution Scale</b>: Manual render scale (33%–100%)"
             ),
             on_change=self._on_profile_widget_changed,
         )
@@ -1472,16 +1464,18 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             "%",
             tooltip=(
                 "<b>Internal Render Scale Ratio</b>\n"
-                "Directly customize internal rendering resolution percentage from 33% (maximum performance) to 100% (native DLAA)."
+                "Directly customize internal rendering resolution percentage from 33% to 100%."
             ),
         )
         self.scale_dlss_ratio.connect("value-changed", self._on_profile_scale_slider_changed)
+        self.row_dlss_ratio.set_visible(False)
         dlss_card.append(self.row_dlss_ratio)
 
         self.lbl_prof_upscale_preview = Gtk.Label(label="", xalign=0, wrap=True)
         self.lbl_prof_upscale_preview.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.lbl_prof_upscale_preview.set_hexpand(True)
         self.lbl_prof_upscale_preview.add_css_class("nv-status-ok")
+        self.lbl_prof_upscale_preview.set_visible(False)
         dlss_card.append(self.lbl_prof_upscale_preview)
 
         self.dd_dlss_preset = self._add_dropdown_row(
@@ -1527,7 +1521,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
 
         self.dd_optiscaler_fg = self._add_dropdown_row(
             dlss_card,
-            "OptiScaler Frame Gen Multiplier",
+            "Frame Gen Multiplier",
             [v[0] for v in OPTISCALER_FG_MODE_MAP.values()],
             tooltip=(
                 "<b>OptiScaler Frame Generation Multiplier</b>\n"
@@ -1537,17 +1531,6 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             on_change=self._on_profile_widget_changed,
         )
         self.dd_dlss_fg = self.dd_optiscaler_fg  # Compatibility alias
-
-        self.sw_optiscaler = self._add_toggle_row(
-            dlss_card,
-            "OptiScaler Universal Upscaler & FG",
-            tooltip=(
-                "<b>OptiScaler Proton Bridge & Frame Gen</b>\n"
-                "Deploys directly underneath the app to power Frame Gen (FSR 3.1 FG translation for RTX 20/30 cards) and translate FSR2/FSR3/XeSS calls to NVIDIA DLSS.\n\n"
-                "<small>Internal: PROTON_USE_OPTISCALER=1 / WINEDLLOVERRIDES=dxgi=n,b</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
 
         self.scale_nis_sharp, row_nis_sharp = self._create_slider_row(
             "CAS Image Sharpening",
@@ -1564,6 +1547,17 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         self.scale_nis_sharp.connect("value-changed", self._on_profile_widget_changed)
         dlss_card.append(row_nis_sharp)
 
+        self.sw_dlss_upgrade = self._add_toggle_row(
+            dlss_card,
+            "Auto-Upgrade DLSS DLLs",
+            tooltip=(
+                "<b>Automatic DLSS DLL Upgrades</b>\n"
+                "Automatically replaces outdated in-game nvngx_dlss.dll files with the newest optimized version, improving stability and reducing ghosting.\n\n"
+                "<small>Internal: PROTON_DLSS_UPGRADE=1</small>"
+            ),
+            on_change=self._on_profile_widget_changed,
+        )
+
         self.sw_dlss_indicator = self._add_toggle_row(
             dlss_card,
             "DLSS On-Screen HUD",
@@ -1575,8 +1569,8 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         )
         rbox.append(dlss_card)
 
-        # Frame Rate, VSync, G-SYNC & Driver Optimizations
-        drv_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        # Frame Rate, VSync & Driver Latency Optimizations
+        drv_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         drv_card.add_css_class("nv-card")
         drv_hdr = Gtk.Label(label="DRIVER GRAPHICS, SYNC & LATENCY SETTINGS", xalign=0)
         drv_hdr.add_css_class("nv-card-title")
@@ -1597,16 +1591,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             ),
             on_change=self._on_profile_widget_changed,
         )
-        self.sw_vrr = self._add_toggle_row(
-            drv_card,
-            "G-SYNC & VRR Allowed",
-            tooltip=(
-                "<b>Variable Refresh Rate (VRR)</b>\n"
-                "Allows variable refresh rate dynamically on supported VRR/G-SYNC displays.\n\n"
-                "<small>Internal: __GL_VRR_ALLOWED=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
+
         self.sw_low_latency = self._add_toggle_row(
             drv_card,
             "Ultra Low Latency Mode",
@@ -1614,74 +1599,6 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
                 "<b>Low Latency Render Queue</b>\n"
                 "Restricts prerendered frames queue to 1 (__GL_MaxFramesAllowed=1). Significantly reduces mouse input lag and eliminates frame timing queue jitter.\n\n"
                 "<small>Internal: __GL_MaxFramesAllowed=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.dd_img_qual = self._add_dropdown_row(
-            drv_card,
-            "Texture Filtering Quality",
-            [v[0] for v in IMAGE_QUALITY_MAP.values()],
-            tooltip=(
-                "<b>Driver Texture Filtering Quality</b>\n"
-                "Controls driver anisotropic filtering and texture mipmap precision. 'Quality' or 'High Quality' gives crisp textures with minimal performance impact."
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.sw_threaded = self._add_toggle_row(
-            drv_card,
-            "Multi-Threaded Optimization",
-            tooltip=(
-                "<b>Threaded Driver Optimization</b>\n"
-                "Enables multi-threaded driver command submission to prevent single CPU core bottlenecks.\n\n"
-                "<small>Internal: __GL_THREADED_OPTIMIZATIONS=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.sw_shader_cache = self._add_toggle_row(
-            drv_card,
-            "Unlimited Shader Cache",
-            tooltip=(
-                "<b>Permanent Shader Disk Cache</b>\n"
-                "Stores compiled shaders permanently on disk without automatic cache cleanup (__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1). Completely stops shader compilation hitching and micro-stutter when loading new areas in games."
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.sw_prime = self._add_toggle_row(
-            drv_card,
-            "Force Dedicated NVIDIA GPU",
-            tooltip=(
-                "<b>PRIME GPU Render Offload</b>\n"
-                "Forces the game to run exclusively on the high-performance NVIDIA GeForce GPU instead of integrated graphics.\n\n"
-                "<small>Internal: __NV_PRIME_RENDER_OFFLOAD=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.sw_wayland = self._add_toggle_row(
-            drv_card,
-            "Proton Wayland Driver",
-            tooltip=(
-                "<b>Direct Wayland Driver</b>\n"
-                "Bypasses Xwayland translation to run directly on native KDE Wayland for lower latency in supported Proton builds.\n\n"
-                "<small>Internal: PROTON_ENABLE_WAYLAND=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.sw_hdr = self._add_toggle_row(
-            drv_card,
-            "Proton HDR Passthrough",
-            tooltip=(
-                "<b>High Dynamic Range (HDR)</b>\n"
-                "Enables 10-bit HDR output for supported games when an HDR display is connected.\n\n"
-                "<small>Internal: PROTON_ENABLE_HDR=1</small>"
-            ),
-            on_change=self._on_profile_widget_changed,
-        )
-        self.sw_mangohud = self._add_toggle_row(
-            drv_card,
-            "MangoHud Overlay",
-            tooltip=(
-                "<b>In-Game Performance HUD</b>\n"
-                "Shows live FPS, frametime graph, and GPU telemetry on-screen while gaming."
             ),
             on_change=self._on_profile_widget_changed,
         )
@@ -1700,6 +1617,59 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         )
         self.scale_fps_limit.connect("value-changed", self._on_profile_widget_changed)
         drv_card.append(row_fps)
+
+        self.dd_img_qual = self._add_dropdown_row(
+            drv_card,
+            "Texture Filtering Quality",
+            [v[0] for v in IMAGE_QUALITY_MAP.values()],
+            tooltip=(
+                "<b>Driver Texture Filtering Quality</b>\n"
+                "Controls driver anisotropic filtering and texture mipmap precision. 'Quality' or 'High Quality' gives crisp textures with minimal performance impact."
+            ),
+            on_change=self._on_profile_widget_changed,
+        )
+
+        self.sw_threaded = self._add_toggle_row(
+            drv_card,
+            "Multi-Threaded Optimization",
+            tooltip=(
+                "<b>Threaded Driver Optimization</b>\n"
+                "Enables multi-threaded driver command submission to prevent single CPU core bottlenecks.\n\n"
+                "<small>Internal: __GL_THREADED_OPTIMIZATIONS=1</small>"
+            ),
+            on_change=self._on_profile_widget_changed,
+        )
+
+        self.sw_shader_cache = self._add_toggle_row(
+            drv_card,
+            "Unlimited Shader Cache",
+            tooltip=(
+                "<b>Permanent Shader Disk Cache</b>\n"
+                "Stores compiled shaders permanently on disk without automatic cache cleanup (__GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1). Completely stops shader compilation hitching and micro-stutter when loading new areas in games."
+            ),
+            on_change=self._on_profile_widget_changed,
+        )
+
+        self.sw_wayland = self._add_toggle_row(
+            drv_card,
+            "Proton Wayland Driver",
+            tooltip=(
+                "<b>Direct Wayland Driver</b>\n"
+                "Bypasses Xwayland translation to run directly on native KDE Wayland for lower latency in supported Proton builds.\n\n"
+                "<small>Internal: PROTON_ENABLE_WAYLAND=1</small>"
+            ),
+            on_change=self._on_profile_widget_changed,
+        )
+
+        self.sw_mangohud = self._add_toggle_row(
+            drv_card,
+            "MangoHud Overlay",
+            tooltip=(
+                "<b>In-Game Performance HUD</b>\n"
+                "Shows live FPS, frametime graph, and GPU telemetry on-screen while gaming."
+            ),
+            on_change=self._on_profile_widget_changed,
+        )
 
         rbox.append(drv_card)
 
@@ -1747,11 +1717,11 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         )
 
     def _update_dlss_sensitivity(self, prof: GameProfile):
-        active = bool(prof.dlss_override)
+        active = bool(prof.dlss_override and prof.dlss_sr_mode != "default")
         self.sw_dlss_upgrade.set_sensitive(active)
-        self.dd_dlss_sr_mode.set_sensitive(active)
-        self.row_dlss_ratio.set_sensitive(active)
-        self.lbl_prof_upscale_preview.set_sensitive(active)
+        self.dd_dlss_preset.set_sensitive(active)
+        self.row_dlss_ratio.set_visible(prof.dlss_sr_mode == "custom")
+        self.lbl_prof_upscale_preview.set_visible(active)
 
     def _add_toggle_row(
         self,
@@ -1918,12 +1888,10 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             self.badge_smooth_status.add_css_class("nv-badge-muted")
             self.lbl_smooth_detail.set_visible(False)
 
-        self.sw_dlss_override.set_active(prof.dlss_override)
-        self.sw_dlss_upgrade.set_active(prof.dlss_upgrade)
-
         sr_keys = list(DLSS_SR_MODE_MAP.keys())
+        cur_sr_mode = prof.dlss_sr_mode if prof.dlss_override and prof.dlss_sr_mode in sr_keys else "default"
         self.dd_dlss_sr_mode.set_selected(
-            sr_keys.index(prof.dlss_sr_mode) if prof.dlss_sr_mode in sr_keys else 0
+            sr_keys.index(cur_sr_mode) if cur_sr_mode in sr_keys else 0
         )
         self.scale_dlss_ratio.set_value(float(prof.dlss_scale_ratio))
         self.lbl_prof_upscale_preview.set_label(
@@ -1945,13 +1913,12 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         cur_fg_mode = prof.optiscaler_fg_mode if prof.optiscaler_fg_mode in fg_keys else ("on" if is_fg_active else "off")
         self.dd_optiscaler_fg.set_selected(fg_keys.index(cur_fg_mode))
 
-        self.sw_optiscaler.set_active(prof.optiscaler_enable)
         self.scale_nis_sharp.set_value(float(prof.nis_sharpening))
+        self.sw_dlss_upgrade.set_active(prof.dlss_upgrade)
         self.sw_dlss_indicator.set_active(prof.dlss_indicator)
 
         vsync_keys = ["app", "on", "off"]
         self.dd_vsync.set_selected(vsync_keys.index(prof.vsync_mode) if prof.vsync_mode in vsync_keys else 0)
-        self.sw_vrr.set_active(prof.vrr_gsync)
         self.sw_low_latency.set_active(prof.low_latency_mode)
 
         iq_keys = list(IMAGE_QUALITY_MAP.keys())
@@ -1960,9 +1927,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         )
         self.sw_threaded.set_active(prof.threaded_optimization)
         self.sw_shader_cache.set_active(prof.unlimited_shader_cache)
-        self.sw_prime.set_active(prof.prime_offload)
         self.sw_wayland.set_active(prof.proton_wayland)
-        self.sw_hdr.set_active(prof.proton_hdr)
         self.sw_mangohud.set_active(prof.mangohud)
         self.scale_fps_limit.set_value(float(prof.fps_limit))
 
@@ -1977,6 +1942,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         active = sw.get_active()
         prof = self.selected_profile
         prof.optiscaler_fg_enabled = active
+        prof.optiscaler_enable = active
         fg_keys = list(OPTISCALER_FG_MODE_MAP.keys())
         if not active:
             prof.optiscaler_fg_mode = "off"
@@ -1988,10 +1954,7 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         else:
             if prof.optiscaler_fg_mode == "off":
                 prof.optiscaler_fg_mode = "on"
-            # Automatically enable OptiScaler directly underneath to make Frame Gen work
-            prof.optiscaler_enable = True
             self._updating_profile_ui = True
-            self.sw_optiscaler.set_active(True)
             if prof.optiscaler_fg_mode in fg_keys:
                 self.dd_optiscaler_fg.set_selected(fg_keys.index(prof.optiscaler_fg_mode))
             self.dd_optiscaler_fg.set_sensitive(True)
@@ -2092,18 +2055,16 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         if prof.app_id != "__global__":
             prof.custom_override = True
 
-        prof.dlss_override = self.sw_dlss_override.get_active()
-        prof.dlss_upgrade = self.sw_dlss_upgrade.get_active()
-
         sr_keys = list(DLSS_SR_MODE_MAP.keys())
         new_sr_mode = sr_keys[self.dd_dlss_sr_mode.get_selected()]
-        if new_sr_mode != prof.dlss_sr_mode:
-            prof.dlss_sr_mode = new_sr_mode
-            if new_sr_mode != "custom" and new_sr_mode != "default":
-                prof.dlss_scale_ratio = DLSS_SR_MODE_MAP[new_sr_mode][2]
-                self._updating_profile_ui = True
-                self.scale_dlss_ratio.set_value(float(prof.dlss_scale_ratio))
-                self._updating_profile_ui = False
+        prof.dlss_sr_mode = new_sr_mode
+        prof.dlss_override = (new_sr_mode != "default")
+
+        if new_sr_mode != "custom" and new_sr_mode != "default":
+            prof.dlss_scale_ratio = DLSS_SR_MODE_MAP[new_sr_mode][2]
+            self._updating_profile_ui = True
+            self.scale_dlss_ratio.set_value(float(prof.dlss_scale_ratio))
+            self._updating_profile_ui = False
 
         prof.dlss_scale_ratio = int(round(self.scale_dlss_ratio.get_value()))
         self.lbl_prof_upscale_preview.set_label(
@@ -2111,40 +2072,32 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         )
         self._update_dlss_sensitivity(prof)
 
+        prof.dlss_upgrade = self.sw_dlss_upgrade.get_active()
         preset_keys = list(DLSS_PRESET_MAP.keys())
         prof.dlss_preset = preset_keys[self.dd_dlss_preset.get_selected()]
         prof.dlss_rr_override = self.sw_dlss_rr.get_active()
 
         prof.optiscaler_fg_enabled = self.sw_optiscaler_fg.get_active()
+        prof.optiscaler_enable = prof.optiscaler_fg_enabled
         fg_keys = list(OPTISCALER_FG_MODE_MAP.keys())
         sel_idx = self.dd_optiscaler_fg.get_selected()
         if prof.optiscaler_fg_enabled:
             prof.optiscaler_fg_mode = fg_keys[sel_idx] if (sel_idx < len(fg_keys) and fg_keys[sel_idx] != "off") else "on"
-            # Keep OptiScaler enabled directly underneath Frame Gen
-            prof.optiscaler_enable = True
-            if not self.sw_optiscaler.get_active():
-                self._updating_profile_ui = True
-                self.sw_optiscaler.set_active(True)
-                self._updating_profile_ui = False
         else:
             prof.optiscaler_fg_mode = "off"
-            prof.optiscaler_enable = self.sw_optiscaler.get_active()
         self.dd_optiscaler_fg.set_sensitive(prof.optiscaler_fg_enabled)
         prof.nis_sharpening = int(round(self.scale_nis_sharp.get_value()))
         prof.dlss_indicator = self.sw_dlss_indicator.get_active()
 
         vsync_keys = ["app", "on", "off"]
         prof.vsync_mode = vsync_keys[self.dd_vsync.get_selected()]
-        prof.vrr_gsync = self.sw_vrr.get_active()
         prof.low_latency_mode = self.sw_low_latency.get_active()
 
         iq_keys = list(IMAGE_QUALITY_MAP.keys())
         prof.image_quality = iq_keys[self.dd_img_qual.get_selected()]
         prof.threaded_optimization = self.sw_threaded.get_active()
         prof.unlimited_shader_cache = self.sw_shader_cache.get_active()
-        prof.prime_offload = self.sw_prime.get_active()
         prof.proton_wayland = self.sw_wayland.get_active()
-        prof.proton_hdr = self.sw_hdr.get_active()
         prof.mangohud = self.sw_mangohud.get_active()
         prof.fps_limit = int(round(self.scale_fps_limit.get_value()))
 
@@ -2219,6 +2172,84 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         self.dd_display_sel.connect("notify::selected", self._on_display_selected)
         banner.append(self.dd_display_sel)
         box.append(banner)
+
+        # --------------------------------------------------------------
+        # Console 30 FPS Mode Card (Frame Pacing & Display Pulldown)
+        # --------------------------------------------------------------
+        card_console = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        card_console.add_css_class("nv-card")
+
+        c_hdr_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        c_hdr_left = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        c_hdr_left.set_hexpand(True)
+        c_icon = Gtk.Image.new_from_icon_name("video-display-symbolic")
+        c_icon.set_pixel_size(16)
+        c_title = Gtk.Label(
+            label="CONSOLE 30 FPS MODE (FLAT 33.3ms FRAME PACING & DISPLAY PULLDOWN)",
+            xalign=0,
+        )
+        c_title.add_css_class("nv-card-title")
+        c_title.set_ellipsize(Pango.EllipsizeMode.END)
+        c_hdr_left.append(c_icon)
+        c_hdr_left.append(c_title)
+        c_hdr_box.append(c_hdr_left)
+
+        self.badge_console_mode = Gtk.Label(label="Native High Refresh")
+        self.badge_console_mode.add_css_class("nv-badge-muted")
+        c_hdr_box.append(self.badge_console_mode)
+        card_console.append(c_hdr_box)
+
+        # Toggle Switch Row
+        self.sw_console_mode = self._add_toggle_row(
+            card_console,
+            "Console 30 FPS Mode",
+            tooltip=(
+                "<b>Console 30 FPS Mode (Flat Frame Pacing)</b>\n"
+                "Locks games to a flat 33.3ms frame delivery window (30 FPS cap) via global MangoHud & DXVK/VKD3D, "
+                "and switches the primary display refresh rate to an exact integer multiple (60Hz for 2:2 pulldown or 120Hz for 4:1 pulldown) "
+                "to completely eliminate judder and uneven frame delivery."
+            ),
+            on_change=self._on_console_mode_toggled,
+        )
+
+        # Secondary Dropdown Row: Target Pulldown Rate
+        self.pulldown_rate_options = ["60Hz (2:2 pulldown)", "120Hz (4:1 pulldown)"]
+        self.dd_pulldown_rate = self._add_dropdown_row(
+            card_console,
+            "Target Pulldown Rate",
+            self.pulldown_rate_options,
+            on_change=self._on_pulldown_rate_changed,
+            tooltip=(
+                "<b>Target Pulldown Rate (Display Refresh Pacing)</b>\n"
+                "• <b>60Hz (2:2 pulldown)</b>: Each 30 FPS frame is displayed for exactly 2 monitor scan cycles (33.3ms cadence).\n"
+                "• <b>120Hz (4:1 pulldown)</b>: Each 30 FPS frame is displayed for exactly 4 monitor scan cycles (ultra-smooth cadence and lower display latency on 120Hz+ panels)."
+            ),
+        )
+
+        # Inline Status Pills Row
+        pills_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        pills_box.set_margin_top(4)
+
+        self.pill_display_status = Gtk.Label(label="Primary Display: Querying...")
+        self.pill_display_status.add_css_class("nv-status-pill")
+
+        self.pill_capper_status = Gtk.Label(label="Global Frame Capper: Inactive")
+        self.pill_capper_status.add_css_class("nv-status-pill")
+
+        pills_box.append(self.pill_display_status)
+        pills_box.append(self.pill_capper_status)
+        card_console.append(pills_box)
+
+        box.append(card_console)
+
+        # Initialize Console 30 FPS Mode UI controls from cached state
+        c_state = self.console_mgr.load_state()
+        self._updating_console_ui = True
+        self.sw_console_mode.set_active(bool(c_state.get("enabled", False)))
+        sel_idx = 0 if c_state.get("target_rate", 60) == 60 else 1
+        self.dd_pulldown_rate.set_selected(sel_idx)
+        self._updating_console_ui = False
+        self._update_console_mode_ui()
 
         # Mode, VRR, HDR, RGB Range Card
         dcard = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -2398,6 +2429,124 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
         )
         _ok2, msg2 = self.display_mgr.apply_vibrance(vib, d.connector)
         self.lbl_disp_status.set_label(f"{msg1} | {msg2}" if ok1 else f"Note: {msg1} | {msg2}")
+
+    def _on_console_mode_toggled(self, sw: Gtk.Switch, _pspec):
+        if self._updating_console_ui:
+            return
+        is_active = sw.get_active()
+        target_hz = 60 if self.dd_pulldown_rate.get_selected() == 0 else 120
+
+        if is_active:
+            ok, summary, warnings = self.console_mgr.enable_console_mode(target_hz)
+            if warnings:
+                for w in warnings:
+                    self.show_toast(f"Notice: {w}", timeout=5)
+            self.show_toast(summary, timeout=4)
+        else:
+            ok, summary, warnings = self.console_mgr.disable_console_mode()
+            if warnings:
+                for w in warnings:
+                    self.show_toast(f"Notice: {w}", timeout=5)
+            self.show_toast(summary, timeout=4)
+
+        self._refresh_displays_ui()
+        self._update_console_mode_ui()
+
+    def _on_pulldown_rate_changed(self, dd: Gtk.DropDown, _pspec):
+        if self._updating_console_ui:
+            return
+        idx = dd.get_selected()
+        new_rate = 60 if idx == 0 else 120
+        ok, summary, warnings = self.console_mgr.set_target_pulldown_rate(new_rate)
+        if warnings:
+            for w in warnings:
+                self.show_toast(f"Notice: {w}", timeout=5)
+        elif self.sw_console_mode.get_active():
+            self.show_toast(summary, timeout=4)
+
+        self._refresh_displays_ui()
+        self._update_console_mode_ui()
+
+    def _update_console_mode_ui(self, status: Optional[dict] = None):
+        if status is None:
+            status = self.console_mgr.get_status_info()
+
+        is_enabled = bool(status.get("enabled", False))
+        target_rate = int(status.get("target_rate", 60))
+        cur_rate = float(status.get("current_rate", 60.0))
+        conn = status.get("primary_connector", "Display")
+
+        # Indicator Badge: "30 FPS @ 60/120Hz" vs "Native High Refresh"
+        if is_enabled:
+            rate_label = f"30 FPS @ {target_rate}Hz ({'2:2' if target_rate == 60 else '4:1'} Pulldown)"
+            self.badge_console_mode.set_label(rate_label)
+            self.badge_console_mode.remove_css_class("nv-badge-muted")
+            self.badge_console_mode.add_css_class("nv-badge")
+        else:
+            self.badge_console_mode.set_label("Native High Refresh")
+            self.badge_console_mode.remove_css_class("nv-badge")
+            self.badge_console_mode.add_css_class("nv-badge-muted")
+
+        # Status Pill 1: Current Active Primary Display & Refresh Rate
+        self.pill_display_status.set_label(f"Primary Display: {conn} @ {cur_rate:.0f}Hz")
+
+        # Status Pill 2: Global Frame Capper Status (Active / Inactive)
+        if is_enabled:
+            self.pill_capper_status.set_label("Global Frame Capper: Active (30 FPS / 33.3ms)")
+            self.pill_capper_status.add_css_class("nv-status-pill-active")
+        else:
+            self.pill_capper_status.set_label("Global Frame Capper: Inactive")
+            self.pill_capper_status.remove_css_class("nv-status-pill-active")
+
+        # Dashboard Banner Quick Indicator Button
+        if hasattr(self, "btn_dash_console"):
+            if is_enabled:
+                self.btn_dash_console.set_label(f"Console 30 FPS: Active ({target_rate}Hz)")
+                self.btn_dash_console.remove_css_class("nv-badge-muted")
+                self.btn_dash_console.add_css_class("nv-badge")
+            else:
+                self.btn_dash_console.set_label("Console 30 FPS: Off")
+                self.btn_dash_console.remove_css_class("nv-badge")
+                self.btn_dash_console.add_css_class("nv-badge-muted")
+
+        # Sync Target Pulldown Rate Dropdown selection
+        if hasattr(self, "dd_pulldown_rate"):
+            sel_idx = 0 if target_rate == 60 else 1
+            if self.dd_pulldown_rate.get_selected() != sel_idx:
+                self._updating_console_ui = True
+                self.dd_pulldown_rate.set_selected(sel_idx)
+                self._updating_console_ui = False
+
+    def _refresh_displays_ui(self):
+        """Refreshes display outputs and current mode in the display settings dropdowns."""
+        try:
+            self.displays = self.display_mgr.get_displays()
+            if not self.displays:
+                return
+            found = False
+            for d in self.displays:
+                if d.connector == self.cur_display.connector:
+                    self.cur_display = d
+                    found = True
+                    break
+            if not found:
+                self.cur_display = self.displays[0]
+
+            disp_names = [f"{d.connector} ({d.monitor_name})" for d in self.displays]
+            self.dd_display_sel.set_model(Gtk.StringList.new(disp_names))
+            idx = next(
+                (i for i, d in enumerate(self.displays) if d.connector == self.cur_display.connector),
+                0,
+            )
+            self.dd_display_sel.set_selected(idx)
+
+            self.dd_disp_mode.set_model(Gtk.StringList.new(self.cur_display.available_modes))
+            if self.cur_display.current_mode in self.cur_display.available_modes:
+                self.dd_disp_mode.set_selected(
+                    self.cur_display.available_modes.index(self.cur_display.current_mode)
+                )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # PAGE 5: SYSTEM & DRIVER INSPECTOR
@@ -2605,6 +2754,24 @@ class NvidiaControlCenterWindow(Adw.ApplicationWindow):
             f"PCIe Bandwidth: TX {snap.pcie_tx_kbps / 1024.0:.2f} MB/s  •  RX {snap.pcie_rx_kbps / 1024.0:.2f} MB/s\n"
             f"SM Clock: {snap.clock_sm_mhz} MHz  •  Video Clock: {snap.clock_video_mhz} MHz",
         )
+
+        # Console 30 FPS Mode Status Pills sync
+        if hasattr(self, "pill_display_status") and hasattr(self, "pill_capper_status"):
+            st = self.console_mgr.get_status_info()
+            conn = st.get("primary_connector", "Display")
+            cur_rate = st.get("current_rate", 60.0)
+            self._set_label_if_changed(self.pill_display_status, f"Primary Display: {conn} @ {cur_rate:.0f}Hz")
+            is_capper_on = st.get("capper_active", False)
+            capper_lbl = (
+                "Global Frame Capper: Active (30 FPS / 33.3ms)"
+                if is_capper_on
+                else "Global Frame Capper: Inactive"
+            )
+            self._set_label_if_changed(self.pill_capper_status, capper_lbl)
+            if is_capper_on:
+                self.pill_capper_status.add_css_class("nv-status-pill-active")
+            else:
+                self.pill_capper_status.remove_css_class("nv-status-pill-active")
 
         # Active Processes List (Only rebuild widget tree when process list signature changes)
         proc_sig = [(p.pid, p.name, p.engine, p.vram_mib) for p in snap.processes[:8]]

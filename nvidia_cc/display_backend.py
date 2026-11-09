@@ -122,6 +122,51 @@ class DisplayBackend:
         except Exception:
             pass
 
+        # 1b. Try org.gnome.Mutter.DisplayConfig D-Bus if kscreen_map is empty (GNOME Wayland)
+        if not kscreen_map:
+            try:
+                import gi
+                gi.require_version("Gio", "2.0")
+                from gi.repository import Gio
+                bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+                proxy = Gio.DBusProxy.new_sync(
+                    bus,
+                    Gio.DBusProxyFlags.NONE,
+                    None,
+                    "org.gnome.Mutter.DisplayConfig",
+                    "/org/gnome/Mutter/DisplayConfig",
+                    "org.gnome.Mutter.DisplayConfig",
+                    None,
+                )
+                _serial, monitors, _logical_monitors, _props = proxy.GetCurrentState()
+                for m in monitors:
+                    info, modes, _mprops = m
+                    connector = info[0]
+                    modes_list = []
+                    cur_mode_str = "1920x1080@60"
+                    for mode in modes:
+                        _m_id, w, h, rate, _scale_f, _supp, mode_props = mode
+                        rate_int = int(round(float(rate)))
+                        m_str = f"{w}x{h}@{rate_int}"
+                        if m_str not in modes_list:
+                            modes_list.append(m_str)
+                        if "is-current" in mode_props:
+                            cur_mode_str = m_str
+                    kscreen_map[connector] = {
+                        "connected": True,
+                        "enabled": True,
+                        "current_mode": cur_mode_str,
+                        "modes": modes_list or [cur_mode_str],
+                        "vrr_policy": "automatic",
+                        "hdr": False,
+                        "wcg": False,
+                        "rgb_range": "automatic",
+                        "scale": 1.0,
+                        "brightness": 100,
+                    }
+            except Exception:
+                pass
+
         # 2. Scan /sys/class/drm/card*-* for physical connectors and EDID names
         drm_root = Path("/sys/class/drm")
         for conn_dir in sorted(drm_root.glob("card*-*")):
@@ -323,6 +368,16 @@ class DisplayBackend:
                 return True, f"Applied display settings to {connector} via KWin/KScreen."
             return False, (proc.stderr or proc.stdout or "kscreen-doctor returned an error").strip()
         except FileNotFoundError:
+            if "@" in mode:
+                try:
+                    rate_hz = int(round(float(mode.split("@")[1])))
+                    from .console_mode import ConsoleModeManager
+                    cm = ConsoleModeManager()
+                    ok, msg = cm.switch_display_refresh(rate_hz)
+                    if ok:
+                        return True, f"Applied display refresh ({rate_hz}Hz) to {connector} via GNOME Mutter/X11."
+                except Exception:
+                    pass
             return (
                 False,
                 "KScreen is not available on this desktop. On GNOME and other desktop environments, resolution, refresh rate, and scaling can be managed directly in Display Settings.",
